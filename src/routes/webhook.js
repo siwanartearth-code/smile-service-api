@@ -1,0 +1,317 @@
+const express = require('express');
+const line = require('@line/bot-sdk');
+const router = express.Router();
+const { query } = require('../config/database');
+const lineService = require('../services/lineService');
+const matchingService = require('../services/matchingService');
+
+const lineMiddleware = line.middleware({
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+});
+
+// ── Webhook endpoint ──────────────────────────────────────────────────────────
+router.post('/', lineMiddleware, async (req, res) => {
+  const events = req.body.events;
+  await Promise.allSettled(events.map(handleEvent));
+  res.status(200).json({ status: 'ok' });
+});
+
+async function handleEvent(event) {
+  if (event.type === 'follow') return handleFollow(event);
+  if (event.type === 'message' && event.message.type === 'text') return handleTextMessage(event);
+}
+
+// ── ผู้ใช้ add LINE OA ──────────────────────────────────────────────────────
+async function handleFollow(event) {
+  const lineUserId = event.source.userId;
+
+  // ดึงโปรไฟล์จาก LINE
+  const profile = await lineService.client.getProfile(lineUserId);
+
+  // บันทึก user ถ้ายังไม่มี
+  await query(
+    `INSERT INTO users (line_user_id, display_name, picture_url)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (line_user_id) DO UPDATE
+     SET display_name = $2, picture_url = $3`,
+    [lineUserId, profile.displayName, profile.pictureUrl]
+  );
+
+  // ส่ง welcome message
+  await lineService.client.pushMessage({
+    to: lineUserId,
+    messages: [{
+      type: 'flex',
+      altText: 'ยินดีต้อนรับสู่ Smile Service 🚗',
+      contents: {
+        type: 'bubble',
+        hero: {
+          type: 'box',
+          layout: 'vertical',
+          backgroundColor: '#1D9E75',
+          paddingAll: '24px',
+          contents: [
+            { type: 'text', text: '🚗 SMILE SERVICE', color: '#ffffff', size: 'xxl', weight: 'bold', align: 'center' },
+            { type: 'text', text: 'บริการรถรับส่งผู้สูงอายุ', color: '#d1fae5', size: 'md', align: 'center', margin: 'sm' },
+          ],
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'md',
+          contents: [
+            { type: 'text', text: `สวัสดีคุณ ${profile.displayName} 👋`, size: 'lg', weight: 'bold' },
+            { type: 'text', text: 'คุณต้องการใช้บริการในฐานะ:', wrap: true, color: '#555555' },
+            {
+              type: 'button', style: 'primary', color: '#1D9E75',
+              action: { type: 'message', label: '👴 ฉันต้องการใช้บริการรถ', text: 'สมัครลูกค้า' },
+            },
+            {
+              type: 'button', style: 'secondary',
+              action: {
+                type: 'uri',
+                label: '🚗 ฉันต้องการเป็นคนขับ',
+                uri: `https://liff.line.me/${process.env.LIFF_ID_DRIVER_REGISTER}`,
+              },
+            },
+          ],
+        },
+      },
+    }],
+  });
+}
+
+// ── Text message handler ──────────────────────────────────────────────────────
+async function handleTextMessage(event) {
+  const { text } = event.message;
+  const lineUserId = event.source.userId;
+
+  // หา user จาก DB
+  const userRes = await query(
+    `SELECT * FROM users WHERE line_user_id = $1`,
+    [lineUserId]
+  );
+  const user = userRes.rows[0];
+
+  // ── Commands ───────────────────────────────────────────
+  if (text === 'สมัครลูกค้า') {
+    return handleCustomerRegistration(event, user);
+  }
+
+  if (text === 'ดูประวัติการจอง') {
+    return sendBookingHistory(lineUserId, user);
+  }
+
+  if (text === 'บัญชีของฉัน') {
+    return sendAccountInfo(lineUserId, user);
+  }
+
+  if (text === 'เปิดรับงาน') {
+    return handleDriverOnline(lineUserId, true);
+  }
+
+  if (text === 'ปิดรับงาน') {
+    return handleDriverOnline(lineUserId, false);
+  }
+
+  if (text === 'รายได้ของฉัน') {
+    return sendDriverEarnings(lineUserId, user);
+  }
+
+  // รับงาน / ปฏิเสธงาน
+  if (text.startsWith('รับงาน ')) {
+    const bookingId = text.replace('รับงาน ', '').trim();
+    return handleAcceptJob(lineUserId, bookingId);
+  }
+
+  if (text.startsWith('ปฏิเสธงาน ')) {
+    return lineService.client.pushMessage({
+      to: lineUserId,
+      messages: [{ type: 'text', text: 'รับทราบ ขอบคุณครับ 👍' }],
+    });
+  }
+
+  // ยกเลิกการจอง
+  if (text.startsWith('ยกเลิกการจอง ')) {
+    const bookingNum = text.replace('ยกเลิกการจอง ', '').trim();
+    return handleCancelBooking(lineUserId, bookingNum);
+  }
+
+  // Default
+  await lineService.client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [{ type: 'text', text: 'กดปุ่มเมนูด้านล่างเพื่อใช้งานได้เลยครับ 😊' }],
+  });
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
+
+async function handleCustomerRegistration(event, user) {
+  if (!user) return;
+
+  // ตั้งค่า role เป็น customer ถ้ายังไม่ได้กำหนด
+  await query(`UPDATE users SET role = 'customer' WHERE id = $1`, [user.id]);
+
+  await lineService.client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [{
+      type: 'text',
+      text: `ยินดีต้อนรับ! ตอนนี้คุณสามารถใช้งานได้แล้วครับ 🎉\n\nกด "จองรถ" ที่เมนูด้านล่างเพื่อเริ่มจองได้เลยครับ`,
+    }],
+  });
+}
+
+async function sendBookingHistory(lineUserId, user) {
+  if (!user) return;
+
+  const res = await query(
+    `SELECT b.booking_number, b.status, b.scheduled_at, b.pickup_address, b.dropoff_address, b.final_price
+     FROM bookings b WHERE b.customer_id = $1 ORDER BY b.created_at DESC LIMIT 5`,
+    [user.id]
+  );
+
+  if (res.rows.length === 0) {
+    return lineService.client.pushMessage({
+      to: lineUserId,
+      messages: [{ type: 'text', text: 'ยังไม่มีประวัติการจองครับ\nกด "จองรถ" เพื่อเริ่มจองได้เลย 🚗' }],
+    });
+  }
+
+  const bubbles = res.rows.map(b => ({
+    type: 'bubble',
+    size: 'kilo',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        { type: 'text', text: `#${b.booking_number}`, weight: 'bold', size: 'sm', color: '#1D9E75' },
+        { type: 'text', text: b.pickup_address, size: 'xs', color: '#555', wrap: true },
+        { type: 'text', text: `→ ${b.dropoff_address}`, size: 'xs', color: '#555', wrap: true },
+        { type: 'text', text: statusLabel(b.status), size: 'xs', color: statusColor(b.status) },
+        b.final_price ? { type: 'text', text: `฿${b.final_price}`, size: 'sm', weight: 'bold' } : null,
+      ].filter(Boolean),
+    },
+  }));
+
+  await lineService.client.pushMessage({
+    to: lineUserId,
+    messages: [{
+      type: 'flex',
+      altText: 'ประวัติการจอง 5 รายการล่าสุด',
+      contents: { type: 'carousel', contents: bubbles },
+    }],
+  });
+}
+
+async function sendAccountInfo(lineUserId, user) {
+  if (!user) return;
+  const text = `👤 บัญชีของคุณ\n\nชื่อ: ${user.display_name}\nสถานะ: ${user.role === 'driver' ? 'คนขับ' : 'ลูกค้า'}\nสมาชิกตั้งแต่: ${new Date(user.created_at).toLocaleDateString('th-TH')}`;
+  await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text }] });
+}
+
+async function handleDriverOnline(lineUserId, isOnline) {
+  const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [lineUserId]);
+  if (!userRes.rows[0]) return;
+  await query(
+    `UPDATE drivers SET is_online = $1 WHERE user_id = $2`,
+    [isOnline, userRes.rows[0].id]
+  );
+  await lineService.client.pushMessage({
+    to: lineUserId,
+    messages: [{ type: 'text', text: isOnline ? '🟢 เปิดรับงานแล้ว! เราจะแจ้งเตือนเมื่อมีงานใกล้คุณ' : '🔴 ปิดรับงานแล้ว' }],
+  });
+}
+
+async function sendDriverEarnings(lineUserId, user) {
+  const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [lineUserId]);
+  if (!userRes.rows[0]) return;
+
+  const res = await query(
+    `SELECT
+       SUM(gross_amount) as gross, SUM(platform_fee) as fee,
+       SUM(tip_amount) as tips, SUM(net_amount) as net,
+       SUM(camera_fund) as cam_fund
+     FROM driver_earnings de
+     JOIN drivers d ON d.id = de.driver_id
+     WHERE d.user_id = $1 AND de.created_at >= NOW() - INTERVAL '30 days'`,
+    [userRes.rows[0].id]
+  );
+  const e = res.rows[0];
+  const camRes = await query(
+    `SELECT camera_fund FROM drivers WHERE user_id = $1`,
+    [userRes.rows[0].id]
+  );
+  const camTotal = camRes.rows[0]?.camera_fund || 0;
+
+  const text = `💰 รายได้ 30 วันที่ผ่านมา\n\n` +
+    `รายได้รวม: ฿${Math.round(e.gross || 0).toLocaleString()}\n` +
+    `ค่า commission: ฿${Math.round(e.fee || 0).toLocaleString()}\n` +
+    `Tip จากลูกค้า: ฿${Math.round(e.tips || 0).toLocaleString()}\n` +
+    `──────────────────\n` +
+    `รับจริง: ฿${Math.round(e.net || 0).toLocaleString()}\n\n` +
+    (camTotal < 4000
+      ? `📷 กองทุนกล้อง: ฿${Math.round(camTotal).toLocaleString()} / 4,000 (${Math.round(camTotal/40)}%)`
+      : `📷 ✅ ครบ 4,000 แล้ว! กล้องกำลังส่งให้คุณ 🎉`);
+
+  await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text }] });
+}
+
+async function handleAcceptJob(driverLineUserId, bookingId) {
+  const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [driverLineUserId]);
+  if (!userRes.rows[0]) return;
+
+  const driverRes = await query(`SELECT id FROM drivers WHERE user_id = $1`, [userRes.rows[0].id]);
+  if (!driverRes.rows[0]) return;
+
+  const result = await matchingService.acceptBooking(bookingId, driverRes.rows[0].id);
+
+  if (!result.success) {
+    return lineService.client.pushMessage({
+      to: driverLineUserId,
+      messages: [{ type: 'text', text: `❌ ${result.reason}` }],
+    });
+  }
+
+  // แจ้งคนขับ
+  await lineService.client.pushMessage({
+    to: driverLineUserId,
+    messages: [{ type: 'text', text: `✅ รับงานสำเร็จ!\n\nกรุณาไปรับผู้โดยสารที่:\n${result.booking.pickup_address}\n\nเวลา: ${new Date(result.booking.scheduled_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}` }],
+  });
+
+  // แจ้งลูกค้า
+  const custRes = await query(`SELECT u.line_user_id FROM users u WHERE u.id = $1`, [result.booking.customer_id]);
+  if (custRes.rows[0]) {
+    await lineService.sendBookingConfirmation(custRes.rows[0].line_user_id, result.booking);
+  }
+}
+
+async function handleCancelBooking(lineUserId, bookingNumber) {
+  const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [lineUserId]);
+  if (!userRes.rows[0]) return;
+
+  const res = await query(
+    `UPDATE bookings SET status = 'cancelled', cancelled_by = 'customer', cancel_reason = 'ลูกค้ายกเลิก'
+     WHERE booking_number = $1 AND customer_id = $2 AND status IN ('pending','searching','confirmed')
+     RETURNING *`,
+    [bookingNumber, userRes.rows[0].id]
+  );
+
+  const msg = res.rows.length > 0
+    ? `✅ ยกเลิกการจอง #${bookingNumber} แล้วครับ`
+    : `❌ ไม่สามารถยกเลิกได้ (อาจเริ่มเดินทางแล้ว หรือไม่พบการจองนี้)`;
+
+  await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text: msg }] });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function statusLabel(s) {
+  const m = { pending:'⏳ รอคนขับ', searching:'🔍 กำลังหาคนขับ', confirmed:'✅ ยืนยันแล้ว', in_progress:'🚗 กำลังเดินทาง', completed:'🎉 เสร็จสิ้น', cancelled:'❌ ยกเลิก' };
+  return m[s] || s;
+}
+function statusColor(s) {
+  const m = { completed:'#1D9E75', cancelled:'#EF4444', in_progress:'#F97316' };
+  return m[s] || '#555555';
+}
+
+module.exports = router;
