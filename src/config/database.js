@@ -1,8 +1,22 @@
 const { Pool } = require('pg');
 
+// รองรับทั้ง DATABASE_URL และ individual params
+const poolConfig = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    }
+  : {
+      host:     process.env.DB_HOST,
+      port:     parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME || 'postgres',
+      user:     process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD,
+      ssl:      { rejectUnauthorized: false },
+    };
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ...poolConfig,
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
