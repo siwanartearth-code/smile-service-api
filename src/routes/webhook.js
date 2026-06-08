@@ -11,8 +11,12 @@ const lineMiddleware = line.middleware({
 
 // ── Webhook endpoint ──────────────────────────────────────────────────────────
 router.post('/', lineMiddleware, async (req, res) => {
+  console.log('[Webhook] ✅ Received:', JSON.stringify(req.body?.events?.map(e => ({ type: e.type, source: e.source }))));
   const events = req.body.events;
-  await Promise.allSettled(events.map(handleEvent));
+  const results = await Promise.allSettled(events.map(handleEvent));
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') console.error(`[Webhook] ❌ Event[${i}] error:`, r.reason?.message || r.reason);
+  });
   res.status(200).json({ status: 'ok' });
 });
 
