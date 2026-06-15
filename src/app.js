@@ -9,6 +9,7 @@ const driversRouter   = require('./routes/drivers');
 const pricingRouter   = require('./routes/pricing');
 const authRouter      = require('./routes/auth');
 const addressesRouter = require('./routes/addresses');
+const paymentsRouter  = require('./routes/payments');
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use('/bookings',  bookingsRouter);
 app.use('/drivers',   driversRouter);
 app.use('/pricing',   pricingRouter);
 app.use('/addresses', addressesRouter);
+app.use('/payments',  paymentsRouter);
 
 // ── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => {

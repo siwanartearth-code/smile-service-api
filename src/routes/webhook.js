@@ -2,8 +2,9 @@ const express = require('express');
 const line = require('@line/bot-sdk');
 const router = express.Router();
 const { query } = require('../config/database');
-const lineService = require('../services/lineService');
+const lineService    = require('../services/lineService');
 const matchingService = require('../services/matchingService');
+const paymentService = require('../services/paymentService');
 
 const lineMiddleware = line.middleware({
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -23,7 +24,8 @@ router.post('/', lineMiddleware, async (req, res) => {
 async function handleEvent(event) {
   if (event.type === 'follow')   return handleFollow(event);
   if (event.type === 'postback') return handlePostback(event);
-  if (event.type === 'message' && event.message.type === 'text') return handleTextMessage(event);
+  if (event.type === 'message' && event.message.type === 'text')  return handleTextMessage(event);
+  if (event.type === 'message' && event.message.type === 'image') return handleImageMessage(event);
 }
 
 // ── Postback (ปุ่มรับ/ปฏิเสธงาน) ─────────────────────────────────────────────
@@ -48,6 +50,16 @@ async function handlePostback(event) {
   if (action === 'toggle_online') {
     const isOnline = params.get('value') === 'true';
     return handleDriverOnline(lineUserId, isOnline, event.replyToken);
+  }
+
+  // ── Admin อนุมัติ/ปฏิเสธสลิป ──────────────────────────────────────────
+  if (action === 'approve_payment') {
+    const paymentId = params.get('payment_id');
+    return handleApprovePayment(lineUserId, paymentId, event.replyToken);
+  }
+  if (action === 'reject_payment') {
+    const paymentId = params.get('payment_id');
+    return handleRejectPayment(lineUserId, paymentId, event.replyToken);
   }
 }
 
@@ -442,6 +454,79 @@ async function handleCancelBooking(lineUserId, bookingNumber) {
     : `❌ ไม่สามารถยกเลิกได้ (อาจเริ่มเดินทางแล้ว หรือไม่พบการจองนี้)`;
 
   await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text: msg }] });
+}
+
+// ── รับภาพสลิปจากลูกค้า ──────────────────────────────────────────────────────
+async function handleImageMessage(event) {
+  const lineUserId = event.source.userId;
+  // ตรวจว่า user มี pending_payment booking ก่อน (เร็ว ไม่ดึงภาพถ้าไม่จำเป็น)
+  const { rows } = await query(
+    `SELECT b.id FROM bookings b
+     JOIN users u ON u.id = b.user_id
+     JOIN payments p ON p.booking_id = b.id
+     WHERE u.line_user_id = $1
+       AND b.payment_status = 'pending_payment'
+       AND p.status IN ('pending','manual_review')
+     LIMIT 1`,
+    [lineUserId]
+  );
+  if (!rows[0]) return; // ไม่ใช่สลิป — ไม่ต้องทำอะไร
+
+  // ส่งให้ paymentService จัดการ
+  await paymentService.processSlipFromLine(event, lineUserId);
+}
+
+// ── Admin อนุมัติสลิป ─────────────────────────────────────────────────────────
+async function handleApprovePayment(adminLineUserId, paymentId, replyToken) {
+  try {
+    const { rows: [payment] } = await query(`SELECT * FROM payments WHERE id = $1`, [paymentId]);
+    if (!payment || payment.status === 'paid') {
+      return lineService.client.replyMessage({ replyToken, messages: [{ type: 'text', text: 'ชำระเงินสำเร็จแล้ว หรือไม่พบรายการ' }] });
+    }
+
+    const result = await paymentService.approvePayment(paymentId, `admin:${adminLineUserId}`);
+    if (!result) return;
+
+    // dispatch driver
+    const { rows: [booking] } = await query(`SELECT * FROM bookings WHERE id = $1`, [result.bookingId]);
+    if (booking) await matchingService.findAndNotifyDrivers(booking);
+
+    await lineService.client.replyMessage({
+      replyToken,
+      messages: [{ type: 'text', text: `✅ อนุมัติสลิปแล้ว\n🔖 ${booking?.booking_number}\n💰 ฿${Number(payment.amount).toLocaleString()}\nกำลังส่งงานหาคนขับ...` }],
+    });
+  } catch (err) {
+    console.error('[handleApprovePayment]', err);
+  }
+}
+
+// ── Admin ปฏิเสธสลิป ─────────────────────────────────────────────────────────
+async function handleRejectPayment(adminLineUserId, paymentId, replyToken) {
+  try {
+    const payment = await paymentService.rejectPayment(paymentId, `admin:${adminLineUserId}`, 'Admin ปฏิเสธ');
+    if (!payment) {
+      return lineService.client.replyMessage({ replyToken, messages: [{ type: 'text', text: 'ไม่พบรายการหรือดำเนินการแล้ว' }] });
+    }
+
+    // แจ้งลูกค้า
+    const { rows: [user] } = await query(
+      `SELECT u.line_user_id FROM users u JOIN bookings b ON b.user_id = u.id WHERE b.id = $1`,
+      [payment.booking_id]
+    );
+    if (user?.line_user_id) {
+      await lineService.client.pushMessage({
+        to: user.line_user_id,
+        messages: [{ type: 'text', text: '❌ สลิปไม่ผ่านการตรวจสอบ\nกรุณาติดต่อเจ้าหน้าที่หากเกิดข้อผิดพลาด' }],
+      });
+    }
+
+    await lineService.client.replyMessage({
+      replyToken,
+      messages: [{ type: 'text', text: '❌ ปฏิเสธสลิปแล้ว และแจ้งลูกค้าเรียบร้อย' }],
+    });
+  } catch (err) {
+    console.error('[handleRejectPayment]', err);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
