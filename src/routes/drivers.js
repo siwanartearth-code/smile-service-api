@@ -146,6 +146,16 @@ router.patch('/me/online', authenticate, async (req, res) => {
   res.json({ is_online });
 });
 
+// ── PATCH /drivers/me/notify-offline  — รับแจ้งงานแม้ปิดรับ ──────────────────
+router.patch('/me/notify-offline', authenticate, async (req, res) => {
+  const { notify_when_offline } = req.body;
+  await query(
+    `UPDATE drivers SET notify_when_offline = $1 WHERE user_id = $2`,
+    [notify_when_offline, req.user.id]
+  );
+  res.json({ notify_when_offline });
+});
+
 // ─── Admin routes ──────────────────────────────────────────────────────────────
 
 // ── GET /drivers  — Admin ดูรายชื่อคนขับทั้งหมด ──────────────────────────────

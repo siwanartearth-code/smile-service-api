@@ -21,8 +21,140 @@ router.post('/', lineMiddleware, async (req, res) => {
 });
 
 async function handleEvent(event) {
-  if (event.type === 'follow') return handleFollow(event);
+  if (event.type === 'follow')   return handleFollow(event);
+  if (event.type === 'postback') return handlePostback(event);
   if (event.type === 'message' && event.message.type === 'text') return handleTextMessage(event);
+}
+
+// ── Postback (ปุ่มรับ/ปฏิเสธงาน) ─────────────────────────────────────────────
+async function handlePostback(event) {
+  const lineUserId = event.source.userId;
+  const params     = new URLSearchParams(event.postback.data);
+  const action     = params.get('action');
+  const bookingId  = params.get('booking_id');
+  const fromOffline = params.get('from_offline') === 'true';
+
+  if (action === 'accept_job' && bookingId) {
+    return handleAcceptJobPostback(lineUserId, bookingId, fromOffline, event.replyToken);
+  }
+
+  if (action === 'reject_job' && bookingId) {
+    return lineService.client.replyMessage({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'รับทราบ ขอบคุณครับ 👍\nระบบจะหาคนขับท่านอื่นให้ลูกค้า' }],
+    });
+  }
+
+  if (action === 'toggle_online') {
+    const isOnline = params.get('value') === 'true';
+    return handleDriverOnline(lineUserId, isOnline, event.replyToken);
+  }
+}
+
+async function handleAcceptJobPostback(driverLineUserId, bookingId, fromOffline, replyToken) {
+  const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [driverLineUserId]);
+  if (!userRes.rows[0]) return;
+
+  const driverRes = await query(`SELECT id FROM drivers WHERE user_id = $1`, [userRes.rows[0].id]);
+  if (!driverRes.rows[0]) return;
+
+  const result = await matchingService.acceptBooking(bookingId, driverRes.rows[0].id);
+
+  if (!result.success) {
+    return lineService.client.replyMessage({
+      replyToken,
+      messages: [{ type: 'text', text: `❌ ${result.reason}` }],
+    });
+  }
+
+  // ถ้าคนขับรับงานจากสถานะออฟไลน์ → เปิดออนไลน์เฉพาะงานนี้โดยไม่เปลี่ยน is_online
+  if (fromOffline) {
+    console.log(`[Webhook] Driver went online for job ${bookingId} (was offline)`);
+  }
+
+  // แจ้งคนขับ
+  await lineService.client.replyMessage({
+    replyToken,
+    messages: [{
+      type: 'flex',
+      altText: `✅ รับงาน #${result.booking.booking_number} สำเร็จ!`,
+      contents: {
+        type: 'bubble',
+        header: {
+          type: 'box', layout: 'vertical', backgroundColor: '#1D9E75', paddingAll: '16px',
+          contents: [{ type: 'text', text: '✅ รับงานสำเร็จ!', color: '#ffffff', size: 'xl', weight: 'bold' }],
+        },
+        body: {
+          type: 'box', layout: 'vertical', spacing: 'sm',
+          contents: [
+            { type: 'text', text: 'กรุณาไปรับผู้โดยสารที่:', size: 'sm', color: '#6B7280' },
+            { type: 'text', text: result.booking.pickup_address, size: 'md', weight: 'bold', wrap: true },
+            { type: 'separator', margin: 'md' },
+            { type: 'text', text: `🕐 ${formatThaiDate(result.booking.scheduled_at)}`, size: 'sm' },
+          ],
+        },
+        footer: {
+          type: 'box', layout: 'vertical',
+          contents: [{
+            type: 'button', style: 'primary', color: '#1D9E75',
+            action: {
+              type: 'uri',
+              label: '🗺️ นำทางไปรับผู้โดยสาร',
+              uri: result.booking.pickup_lat
+                ? `https://maps.google.com/?q=${result.booking.pickup_lat},${result.booking.pickup_lng}`
+                : `https://maps.google.com/?q=${encodeURIComponent(result.booking.pickup_address)}`,
+            },
+          }],
+        },
+      },
+    }],
+  });
+
+  // แจ้งลูกค้า
+  const custRes = await query(
+    `SELECT u.line_user_id FROM users u WHERE u.id = $1`,
+    [result.booking.customer_id]
+  );
+  if (custRes.rows[0]) {
+    // ดึงข้อมูลคนขับ
+    const drvInfo = await query(
+      `SELECT d.*, u.display_name FROM drivers d JOIN users u ON u.id=d.user_id WHERE d.id = $1`,
+      [driverRes.rows[0].id]
+    );
+    const drv = drvInfo.rows[0];
+    await lineService.client.pushMessage({
+      to: custRes.rows[0].line_user_id,
+      messages: [{
+        type: 'flex',
+        altText: `🚗 คนขับรับงานแล้ว! #${result.booking.booking_number}`,
+        contents: {
+          type: 'bubble',
+          header: {
+            type: 'box', layout: 'vertical', backgroundColor: '#1D9E75', paddingAll: '16px',
+            contents: [{ type: 'text', text: '🚗 คนขับรับงานแล้ว!', color: '#ffffff', size: 'xl', weight: 'bold' }],
+          },
+          body: {
+            type: 'box', layout: 'vertical', spacing: 'sm',
+            contents: [
+              { type: 'text', text: `👤 ${drv?.display_name || 'คนขับ'}`, size: 'lg', weight: 'bold' },
+              drv?.car_brand ? { type: 'text', text: `🚗 ${drv.car_brand} ${drv.car_model} — ${drv.car_plate}`, size: 'sm', color: '#374151' } : null,
+              drv?.car_color ? { type: 'text', text: `🎨 สี${drv.car_color}`, size: 'sm', color: '#6B7280' } : null,
+              { type: 'separator', margin: 'md' },
+              { type: 'text', text: `📍 มารับที่: ${result.booking.pickup_address}`, size: 'sm', wrap: true },
+              { type: 'text', text: `🕐 ${formatThaiDate(result.booking.scheduled_at)}`, size: 'sm' },
+            ].filter(Boolean),
+          },
+          footer: {
+            type: 'box', layout: 'vertical',
+            contents: [{
+              type: 'button', style: 'secondary',
+              action: { type: 'message', label: '❌ ยกเลิก', text: `ยกเลิกการจอง ${result.booking.booking_number}` },
+            }],
+          },
+        },
+      }],
+    });
+  }
 }
 
 // ── ผู้ใช้ add LINE OA ──────────────────────────────────────────────────────
@@ -122,18 +254,21 @@ async function handleTextMessage(event) {
     return sendDriverEarnings(lineUserId, user);
   }
 
-  // รับงาน / ปฏิเสธงาน
+  // รับงาน / ปฏิเสธงาน (fallback text ถ้า postback ไม่ทำงาน)
   if (text.startsWith('รับงาน ')) {
     const bookingId = text.replace('รับงาน ', '').trim();
     return handleAcceptJob(lineUserId, bookingId);
   }
 
   if (text.startsWith('ปฏิเสธงาน ')) {
-    return lineService.client.pushMessage({
-      to: lineUserId,
-      messages: [{ type: 'text', text: 'รับทราบ ขอบคุณครับ 👍' }],
+    return lineService.client.replyMessage({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'รับทราบ ขอบคุณครับ 👍\nระบบจะหาคนขับท่านอื่นต่อไป' }],
     });
   }
+
+  if (text === 'เปิดรับงาน') return handleDriverOnline(lineUserId, true, null);
+  if (text === 'ปิดรับงาน')  return handleDriverOnline(lineUserId, false, null);
 
   // ยกเลิกการจอง
   if (text.startsWith('ยกเลิกการจอง ')) {
@@ -214,16 +349,28 @@ async function sendAccountInfo(lineUserId, user) {
   await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text }] });
 }
 
-async function handleDriverOnline(lineUserId, isOnline) {
+async function handleDriverOnline(lineUserId, isOnline, replyToken) {
   const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [lineUserId]);
   if (!userRes.rows[0]) return;
   await query(
     `UPDATE drivers SET is_online = $1 WHERE user_id = $2`,
     [isOnline, userRes.rows[0].id]
   );
-  await lineService.client.pushMessage({
-    to: lineUserId,
-    messages: [{ type: 'text', text: isOnline ? '🟢 เปิดรับงานแล้ว! เราจะแจ้งเตือนเมื่อมีงานใกล้คุณ' : '🔴 ปิดรับงานแล้ว' }],
+  const msg = { type: 'text', text: isOnline
+    ? '🟢 เปิดรับงานแล้ว!\nระบบจะส่งงานให้คุณทันทีเมื่อมีลูกค้าจอง'
+    : '🔴 ปิดรับงานแล้ว\nคุณจะไม่ได้รับแจ้งเตือนงานใหม่' };
+
+  if (replyToken) {
+    return lineService.client.replyMessage({ replyToken, messages: [msg] });
+  }
+  return lineService.client.pushMessage({ to: lineUserId, messages: [msg] });
+}
+
+function formatThaiDate(isoDate) {
+  if (!isoDate) return '—';
+  return new Date(isoDate).toLocaleString('th-TH', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: 'short',
+    day: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 }
 
@@ -261,33 +408,22 @@ async function sendDriverEarnings(lineUserId, user) {
   await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text }] });
 }
 
+// Fallback text-based accept (ไว้รองรับกรณีเก่า — ใช้ push แทน reply)
 async function handleAcceptJob(driverLineUserId, bookingId) {
   const userRes = await query(`SELECT id FROM users WHERE line_user_id = $1`, [driverLineUserId]);
   if (!userRes.rows[0]) return;
-
   const driverRes = await query(`SELECT id FROM drivers WHERE user_id = $1`, [userRes.rows[0].id]);
   if (!driverRes.rows[0]) return;
-
   const result = await matchingService.acceptBooking(bookingId, driverRes.rows[0].id);
-
   if (!result.success) {
-    return lineService.client.pushMessage({
-      to: driverLineUserId,
-      messages: [{ type: 'text', text: `❌ ${result.reason}` }],
-    });
+    return lineService.client.pushMessage({ to: driverLineUserId, messages: [{ type: 'text', text: `❌ ${result.reason}` }] });
   }
-
-  // แจ้งคนขับ
   await lineService.client.pushMessage({
     to: driverLineUserId,
-    messages: [{ type: 'text', text: `✅ รับงานสำเร็จ!\n\nกรุณาไปรับผู้โดยสารที่:\n${result.booking.pickup_address}\n\nเวลา: ${new Date(result.booking.scheduled_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}` }],
+    messages: [{ type: 'text', text: `✅ รับงานสำเร็จ!\n\nรับที่: ${result.booking.pickup_address}\nเวลา: ${formatThaiDate(result.booking.scheduled_at)}` }],
   });
-
-  // แจ้งลูกค้า
   const custRes = await query(`SELECT u.line_user_id FROM users u WHERE u.id = $1`, [result.booking.customer_id]);
-  if (custRes.rows[0]) {
-    await lineService.sendBookingConfirmation(custRes.rows[0].line_user_id, result.booking);
-  }
+  if (custRes.rows[0]) await lineService.sendBookingConfirmation(custRes.rows[0].line_user_id, result.booking);
 }
 
 async function handleCancelBooking(lineUserId, bookingNumber) {
