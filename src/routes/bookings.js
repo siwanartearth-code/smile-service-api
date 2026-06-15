@@ -115,6 +115,30 @@ router.patch('/:id/status', authenticate, async (req, res) => {
   res.json(rows[0]);
 });
 
+// ── PATCH /bookings/:id/location  — คนขับส่ง GPS แบบ real-time ──────────────
+router.patch('/:id/location', authenticate, async (req, res) => {
+  const { lat, lng } = req.body;
+  if (!lat || !lng) return res.status(400).json({ error: 'lat/lng required' });
+
+  // ตรวจว่าเป็นคนขับของงานนี้จริงๆ และงานยังไม่เสร็จ
+  const { rows } = await query(
+    `SELECT d.id as driver_id
+     FROM bookings b
+     JOIN drivers d ON d.user_id = $1
+     WHERE b.id = $2
+       AND b.driver_id = d.id
+       AND b.status IN ('confirmed','driver_arrived','in_progress')`,
+    [req.user.id, req.params.id]
+  );
+  if (!rows[0]) return res.status(403).json({ error: 'ไม่ใช่งานของคุณหรืองานสิ้นสุดแล้ว' });
+
+  await query(
+    `UPDATE drivers SET current_lat = $1, current_lng = $2, location_updated_at = NOW() WHERE id = $3`,
+    [lat, lng, rows[0].driver_id]
+  );
+  res.json({ ok: true });
+});
+
 // ── POST /bookings/:id/review ─────────────────────────────────────────────────
 router.post('/:id/review', authenticate, async (req, res) => {
   const { stars, tags, comment, tip_amount } = req.body;

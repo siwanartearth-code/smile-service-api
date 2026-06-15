@@ -3,11 +3,12 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 
-const webhookRouter  = require('./routes/webhook');
-const bookingsRouter = require('./routes/bookings');
-const driversRouter  = require('./routes/drivers');
-const pricingRouter  = require('./routes/pricing');
-const authRouter     = require('./routes/auth');
+const webhookRouter   = require('./routes/webhook');
+const bookingsRouter  = require('./routes/bookings');
+const driversRouter   = require('./routes/drivers');
+const pricingRouter   = require('./routes/pricing');
+const authRouter      = require('./routes/auth');
+const addressesRouter = require('./routes/addresses');
 
 const app = express();
 
@@ -30,11 +31,12 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Routes ────────────────────────────────────────────────────
-app.use('/webhook',  webhookRouter);
-app.use('/auth',     authRouter);
-app.use('/bookings', bookingsRouter);
-app.use('/drivers',  driversRouter);
-app.use('/pricing',  pricingRouter);
+app.use('/webhook',   webhookRouter);
+app.use('/auth',      authRouter);
+app.use('/bookings',  bookingsRouter);
+app.use('/drivers',   driversRouter);
+app.use('/pricing',   pricingRouter);
+app.use('/addresses', addressesRouter);
 
 // ── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => {
