@@ -52,6 +52,20 @@ async function handlePostback(event) {
     return handleDriverOnline(lineUserId, isOnline, event.replyToken);
   }
 
+  // ── Admin อนุมัติ/ปฏิเสธคนขับ ─────────────────────────────────────────────
+  if (action === 'approve_driver') {
+    const driverId = params.get('driver_id');
+    return handleApproveDriver(lineUserId, driverId, event.replyToken);
+  }
+  if (action === 'reject_driver') {
+    const driverId = params.get('driver_id');
+    return handleRejectDriver(lineUserId, driverId, event.replyToken);
+  }
+  if (action === 'confirm_payout') {
+    const payoutId = params.get('payout_id');
+    return handleConfirmPayout(lineUserId, payoutId, event.replyToken);
+  }
+
   // ── Admin อนุมัติ/ปฏิเสธสลิป ──────────────────────────────────────────
   if (action === 'approve_payment') {
     const paymentId = params.get('payment_id');
@@ -454,6 +468,109 @@ async function handleCancelBooking(lineUserId, bookingNumber) {
     : `❌ ไม่สามารถยกเลิกได้ (อาจเริ่มเดินทางแล้ว หรือไม่พบการจองนี้)`;
 
   await lineService.client.pushMessage({ to: lineUserId, messages: [{ type: 'text', text: msg }] });
+}
+
+// ── Admin อนุมัติคนขับ ────────────────────────────────────────────────────────
+async function handleApproveDriver(adminLineUserId, driverId, replyToken) {
+  try {
+    const { rows: [driver] } = await query(
+      `UPDATE drivers SET status='active', verified_at=NOW(), updated_at=NOW()
+       WHERE id=$1 RETURNING *, (SELECT line_user_id FROM users WHERE id=user_id) as line_user_id,
+       (SELECT display_name FROM users WHERE id=user_id) as display_name`,
+      [driverId]
+    );
+    if (!driver) {
+      return lineService.client.replyMessage({ replyToken, messages: [{ type: 'text', text: 'ไม่พบคนขับ' }] });
+    }
+    // แจ้งคนขับ
+    if (driver.line_user_id) {
+      await lineService.client.pushMessage({
+        to: driver.line_user_id,
+        messages: [{
+          type: 'flex',
+          altText: '🎉 บัญชีคนขับได้รับการอนุมัติแล้ว!',
+          contents: {
+            type: 'bubble',
+            body: {
+              type: 'box', layout: 'vertical', paddingAll: '24px', spacing: 'md',
+              contents: [
+                { type: 'text', text: '🎉', size: '3xl', align: 'center' },
+                { type: 'text', text: 'ยินดีด้วย!', weight: 'bold', size: 'xl', align: 'center', color: '#1D9E75' },
+                { type: 'text', text: `สวัสดีคุณ ${driver.first_name}`, size: 'sm', align: 'center', color: '#555' },
+                { type: 'separator', margin: 'md' },
+                { type: 'text', text: 'บัญชีคนขับของคุณได้รับการอนุมัติแล้ว ✅\nกดปุ่ม "เปิดรับงาน" ได้เลยค่ะ', wrap: true, size: 'sm', color: '#444', align: 'center' },
+              ],
+            },
+            footer: {
+              type: 'box', layout: 'vertical', paddingAll: '12px',
+              contents: [{
+                type: 'button', style: 'primary', color: '#1D9E75',
+                action: { type: 'uri', label: '🚗 เริ่มรับงาน', uri: `https://liff.line.me/${process.env.LIFF_ID_DRIVER}` },
+              }],
+            },
+          },
+        }],
+      });
+    }
+    await lineService.client.replyMessage({
+      replyToken,
+      messages: [{ type: 'text', text: `✅ อนุมัติ ${driver.first_name} ${driver.last_name} แล้ว\nแจ้งเตือนคนขับเรียบร้อย` }],
+    });
+  } catch (err) {
+    console.error('[handleApproveDriver]', err);
+  }
+}
+
+// ── Admin ปฏิเสธคนขับ ─────────────────────────────────────────────────────────
+async function handleRejectDriver(adminLineUserId, driverId, replyToken) {
+  try {
+    const { rows: [driver] } = await query(
+      `UPDATE drivers SET status='rejected', rejection_reason='ข้อมูลไม่ครบถ้วน / ไม่ผ่านเกณฑ์', updated_at=NOW()
+       WHERE id=$1 RETURNING *, (SELECT line_user_id FROM users WHERE id=user_id) as line_user_id`,
+      [driverId]
+    );
+    if (!driver) return;
+    if (driver.line_user_id) {
+      await lineService.client.pushMessage({
+        to: driver.line_user_id,
+        messages: [{ type: 'text', text: `❌ ขออภัย ยังไม่สามารถอนุมัติบัญชีคนขับได้\n\nเหตุผล: ข้อมูลไม่ครบถ้วน / ไม่ผ่านเกณฑ์\n\nกรุณาติดต่อเจ้าหน้าที่เพื่อสอบถามเพิ่มเติมค่ะ` }],
+      });
+    }
+    await lineService.client.replyMessage({
+      replyToken,
+      messages: [{ type: 'text', text: `❌ ปฏิเสธ ${driver.first_name} ${driver.last_name} แล้ว\nแจ้งคนขับเรียบร้อย` }],
+    });
+  } catch (err) {
+    console.error('[handleRejectDriver]', err);
+  }
+}
+
+// ── Admin ยืนยันโอนเงิน ──────────────────────────────────────────────────────
+async function handleConfirmPayout(adminLineUserId, payoutId, replyToken) {
+  try {
+    const { rows: [payout] } = await query(
+      `UPDATE driver_payouts SET status='paid', paid_at=NOW(), paid_by=$2 WHERE id=$1 RETURNING *, driver_id`,
+      [payoutId, adminLineUserId]
+    );
+    if (!payout) return;
+
+    const userRes = await query(
+      `SELECT u.line_user_id, d.first_name FROM users u JOIN drivers d ON d.user_id=u.id WHERE d.id=$1`,
+      [payout.driver_id]
+    );
+    if (userRes.rows[0]?.line_user_id) {
+      await lineService.client.pushMessage({
+        to: userRes.rows[0].line_user_id,
+        messages: [{ type: 'text', text: `✅ โอนเงินให้คุณ ${userRes.rows[0].first_name} แล้วค่ะ\n💰 ฿${Number(payout.amount).toLocaleString()}\nกรุณาตรวจสอบบัญชีได้เลย` }],
+      });
+    }
+    await lineService.client.replyMessage({
+      replyToken,
+      messages: [{ type: 'text', text: `✅ บันทึกการโอนเงิน ฿${Number(payout.amount).toLocaleString()} แล้ว\nแจ้งคนขับเรียบร้อย` }],
+    });
+  } catch (err) {
+    console.error('[handleConfirmPayout]', err);
+  }
 }
 
 // ── รับภาพสลิปจากลูกค้า ──────────────────────────────────────────────────────
