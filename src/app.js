@@ -10,6 +10,7 @@ const pricingRouter   = require('./routes/pricing');
 const authRouter      = require('./routes/auth');
 const addressesRouter = require('./routes/addresses');
 const paymentsRouter  = require('./routes/payments');
+const adminRouter     = require('./routes/admin');
 
 const app = express();
 
@@ -18,8 +19,10 @@ app.use(helmet());
 app.use(cors({
   origin: [
     process.env.FRONTEND_URL,
+    process.env.WEB_URL,
     'https://liff.line.me',
     'http://localhost:5173',
+    'http://localhost:5174',
   ],
   credentials: true,
 }));
@@ -39,6 +42,7 @@ app.use('/drivers',   driversRouter);
 app.use('/pricing',   pricingRouter);
 app.use('/addresses', addressesRouter);
 app.use('/payments',  paymentsRouter);
+app.use('/admin',     adminRouter);
 
 // ── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => {

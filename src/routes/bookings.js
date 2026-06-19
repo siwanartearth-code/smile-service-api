@@ -1,11 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const { query } = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 const { calculatePrice } = require('../services/pricingService');
 const { findAndNotifyDrivers } = require('../services/matchingService');
 const lineService = require('../services/lineService');
 const { v4: uuidv4 } = require('uuid');
+
+// ── GET /bookings/all  — Admin: ดูการจองทั้งหมด ─────────────────────────────
+router.get('/all', authenticate, requireAdmin, async (req, res) => {
+  const { status, limit = 50, offset = 0 } = req.query;
+  const where = status ? `WHERE b.status = '${status}'` : '';
+  const { rows } = await query(
+    `SELECT b.*, d.first_name || ' ' || d.last_name AS driver_name, d.car_plate,
+            u.display_name AS customer_name, u.line_user_id
+     FROM bookings b
+     LEFT JOIN drivers d ON d.id = b.driver_id
+     LEFT JOIN users u ON u.id = b.customer_id
+     ${where}
+     ORDER BY b.created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+  const countRes = await query(`SELECT COUNT(*) FROM bookings b ${where}`);
+  res.json({ bookings: rows, total: parseInt(countRes.rows[0].count) });
+});
+
 
 // ── GET /bookings  — รายการจองของ user ──────────────────────────────────────
 router.get('/', authenticate, async (req, res) => {

@@ -45,4 +45,53 @@ router.post('/line', async (req, res) => {
   res.json({ token, user });
 });
 
+/**
+ * POST /auth/admin
+ * Admin login ด้วย password (สำหรับ Web Dashboard)
+ */
+router.post('/admin', async (req, res) => {
+  const { password } = req.body;
+  const adminPassword = process.env.ADMIN_PASSWORD || 'admin1234';
+  if (password !== adminPassword) return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+
+  // หา user ที่เป็น admin
+  const { rows } = await query(`SELECT * FROM users WHERE role = 'admin' LIMIT 1`);
+  if (!rows[0]) return res.status(404).json({ error: 'ไม่พบบัญชี admin' });
+
+  const token = jwt.sign(
+    { userId: rows[0].id, role: 'admin' },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  res.json({ token, user: rows[0] });
+});
+
+/**
+ * POST /auth/driver-web
+ * คนขับ login ผ่าน Web Portal ด้วยเบอร์โทร
+ */
+router.post('/driver-web', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+
+  // หา user ที่มีเบอร์นี้และเป็น driver ที่ approved
+  const { rows } = await query(
+    `SELECT u.*, d.id as driver_id, d.first_name, d.last_name, d.car_type, d.car_plate,
+            d.is_online, d.average_rating, d.total_trips
+     FROM users u
+     JOIN drivers d ON d.user_id = u.id
+     WHERE u.phone = $1 AND d.status = 'active'
+     LIMIT 1`,
+    [phone]
+  );
+  if (!rows[0]) return res.status(401).json({ error: 'ไม่พบบัญชีคนขับ กรุณาตรวจสอบเบอร์โทร' });
+
+  const token = jwt.sign(
+    { userId: rows[0].id, role: 'driver' },
+    process.env.JWT_SECRET,
+    { expiresIn: '30d' }
+  );
+  res.json({ token, user: rows[0] });
+});
+
 module.exports = router;
