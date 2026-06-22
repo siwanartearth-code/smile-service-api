@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMILE SERVICE — API Tester</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; color: #f97316; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .controls label { font-size: 13px; color: #94a3b8; }
+  input[type=text] { background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; padding: 8px 12px; font-size: 13px; width: 180px; outline: none; }
+  button { background: #f97316; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; }
+  button:hover { background: #ea6c0a; }
+  button:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+  #copyBtn { background: #22c55e; display: none; }
+  #copyBtn:hover { background: #16a34a; }
+  .scores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+  .card { background: #1e293b; border-radius: 10px; padding: 14px; text-align: center; }
+  .card .n { font-size: 28px; font-weight: 700; }
+  .card .l { font-size: 11px; color: #64748b; margin-top: 4px; }
+  .green { color: #22c55e; } .red { color: #ef4444; } .amber { color: #f59e0b; } .blue { color: #60a5fa; }
+  .log { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; font-family: 'Courier New', monospace; font-size: 12.5px; line-height: 1.8; max-height: 500px; overflow-y: auto; }
+  .pass { color: #22c55e; } .fail { color: #ef4444; } .warn { color: #f59e0b; }
+  .dim { color: #475569; } .head { color: #e2e8f0; font-weight: 600; } .info { color: #94a3b8; }
+  .copied { background: #166534 !important; }
+</style>
+</head>
+<body>
+
+<h1>🚗 SMILE SERVICE — API Tester</h1>
+<p class="sub" id="api-url">https://smile-service-api.onrender.com</p>
+
+<div class="controls">
+  <label>Admin password:</label>
+  <input type="text" id="pw" value="smile2024" />
+  <button id="runBtn" onclick="startTests()">▶ รันเทสต์</button>
+  <button id="copyBtn" onclick="copyResults()">📋 คัดลอกผลส่ง Claude</button>
+</div>
+
+<div class="scores">
+  <div class="card"><div class="n green" id="s-pass">—</div><div class="l">✅ ผ่าน</div></div>
+  <div class="card"><div class="n red"   id="s-fail">—</div><div class="l">❌ ไม่ผ่าน</div></div>
+  <div class="card"><div class="n amber" id="s-warn">—</div><div class="l">⚠️ เตือน</div></div>
+  <div class="card"><div class="n blue"  id="s-pct">—</div><div class="l">🎯 คะแนน</div></div>
+</div>
+
+<div class="log" id="log">
+  <span class="dim">กด "รันเทสต์" เพื่อเริ่มทดสอบ API ทั้งหมด...</span>
+</div>
+
+<script>
+const API = 'https://smile-service-api.onrender.com';
+let passed = 0, failed = 0, warned = 0;
+const lines = [];
+const results = [];
+
+function addLine(text, cls = '') {
+  const log = document.getElementById('log');
+  const span = document.createElement('div');
+  span.className = cls;
+  span.textContent = text;
+  log.appendChild(span);
+  log.scrollTop = log.scrollHeight;
+  lines.push(text);
+}
+
+function updateScore() {
+  const total = passed + failed + warned;
+  document.getElementById('s-pass').textContent = passed;
+  document.getElementById('s-fail').textContent = failed;
+  document.getElementById('s-warn').textContent = warned;
+  const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
+  document.getElementById('s-pct').textContent = pct + '%';
+}
+
+async function req(method, path, body, token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  try {
+    const r = await fetch(API + path, {
+      method, headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+    const text = await r.text();
+    let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    return { status: r.status, ok: r.ok, data: json };
+  } catch (e) {
+    return { status: 0, ok: false, data: null, error: e.message };
+  }
+}
+
+function test(name, status, expected, data, mode) {
+  const exp = [].concat(expected);
+  const pass = exp.includes(status);
+  const isWarn = !pass && mode === 'warn';
+  if (pass) passed++; else if (isWarn) warned++; else failed++;
+  const icon = pass ? '✅' : isWarn ? '⚠️' : '❌';
+  const text = `  ${icon} ${name} → HTTP ${status} (expect ${exp.join('/')})`;
+  addLine(text, pass ? 'pass' : isWarn ? 'warn' : 'fail');
+  if (!pass && data && !isWarn) {
+    addLine('     └─ ' + JSON.stringify(data)?.slice(0, 160), 'info');
+  }
+  updateScore();
+  results.push({ name, status, pass, isWarn, data: JSON.stringify(data)?.slice(0, 120) });
+  return pass;
+}
+
+async function startTests() {
+  passed = 0; failed = 0; warned = 0;
+  lines.length = 0; results.length = 0;
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('copyBtn').style.display = 'none';
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '⏳ กำลังทดสอบ...';
+  document.getElementById('s-pass').textContent = '—';
+  document.getElementById('s-fail').textContent = '—';
+  document.getElementById('s-warn').textContent = '—';
+  document.getElementById('s-pct').textContent = '—';
+
+  const pw = document.getElementById('pw').value.trim() || 'smile2024';
+  let adminToken = null;
+
+  addLine('🚗 SMILE SERVICE — API Test Suite', 'head');
+  addLine('📡 ' + API, 'info');
+  addLine('─'.repeat(55), 'dim');
+
+  // [1] Health
+  addLine('\n[1] Health Check', 'head');
+  const h = await req('GET', '/health');
+  test('GET /health', h.status, 200, h.data);
+  if (h.ok) addLine('     └─ ' + JSON.stringify(h.data), 'info');
+
+  // [2] Pricing
+  addLine('\n[2] Pricing API', 'head');
+  for (const [t, d, u] of [['sedan',10,20],['van',5,15],['wheelchair_van',8,25]]) {
+    const r = await req('POST', '/bookings/price-estimate', { car_type: t, distance_km: d, duration_min: u });
+    const ok = test(`ราคา ${t} ${d}km`, r.status, [200,201], r.data);
+    if (ok && r.data) addLine(`     └─ total=฿${r.data.total ?? r.data.final ?? '?'}  base=฿${r.data.base ?? '?'}`, 'info');
+  }
+
+  // [3] Auth
+  addLine('\n[3] Authentication', 'head');
+  test('POST /auth/line (ไม่มี token) → 400', (await req('POST','/auth/line',{})).status, [400,401]);
+  test('POST /auth/admin (password ผิด) → 401', (await req('POST','/auth/admin',{password:'wrongXXX'})).status, 401);
+
+  const ar = await req('POST', '/auth/admin', { password: pw });
+  const adminOk = test('POST /auth/admin (password ถูก)', ar.status, [200,201,404], ar.data, ar.status===404?'warn':undefined);
+  adminToken = ar.data?.token;
+  if (adminToken) addLine('     └─ ✅ ได้ admin token แล้ว', 'pass');
+  else if (ar.status===404) addLine('     └─ ⚠️  ยังไม่มี admin user ใน DB', 'warn');
+
+  test('POST /auth/driver-web (เบอร์ไม่มี) → 401', (await req('POST','/auth/driver-web',{phone:'0000000000'})).status, 401);
+
+  // [4] Protected
+  addLine('\n[4] Protected Routes (ต้อง 401 เมื่อไม่มี token)', 'head');
+  for (const [m,p] of [['GET','/bookings'],['POST','/bookings'],['GET','/drivers/me'],
+    ['GET','/drivers/me/jobs'],['GET','/drivers/me/earnings'],['PATCH','/drivers/me/online'],['POST','/drivers/me/request-payout']]) {
+    test(`${m} ${p} → 401`, (await req(m, p, m!=='GET'?{}:undefined)).status, 401);
+  }
+
+  // [5] Admin
+  addLine('\n[5] Admin Routes', 'head');
+  test('GET /admin/stats (ไม่มี token) → 401', (await req('GET','/admin/stats')).status, 401);
+  test('GET /bookings/all (ไม่มี token) → 401', (await req('GET','/bookings/all')).status, 401);
+
+  if (adminToken) {
+    const stats = await req('GET', '/admin/stats', null, adminToken);
+    test('GET /admin/stats (admin)', stats.status, 200, stats.data);
+    if (stats.ok) {
+      const s = stats.data;
+      addLine(`     └─ 📊 bookings=${s.total_bookings} | drivers=${s.active_drivers} | revenue=฿${Math.round(s.total_revenue||0).toLocaleString()} | pending=${s.pending_bookings}`, 'info');
+    }
+    const allB = await req('GET', '/bookings/all?limit=5', null, adminToken);
+    test('GET /bookings/all (admin)', allB.status, 200, allB.data);
+    if (allB.ok) addLine(`     └─ 📋 total=${allB.data?.total} bookings`, 'info');
+
+    const drvs = await req('GET', '/drivers?status=pending', null, adminToken);
+    test('GET /drivers (admin)', drvs.status, 200, drvs.data);
+    if (drvs.ok) addLine(`     └─ 👥 pending drivers=${Array.isArray(drvs.data)?drvs.data.length:'?'}`, 'info');
+
+    const payouts = await req('GET', '/admin/payouts', null, adminToken);
+    test('GET /admin/payouts', payouts.status, 200, payouts.data);
+  } else {
+    addLine('  ⚠️  ข้าม admin tests — ไม่มี token', 'warn');
+    warned += 3;
+  }
+
+  // [6] Error Handling
+  addLine('\n[6] Error Handling', 'head');
+  test('GET /nonexistent → 404', (await req('GET','/this-route-does-not-exist')).status, 404);
+  test('POST /auth/admin (ไม่ส่ง body) → 400/401', (await req('POST','/auth/admin')).status, [400,401]);
+
+  // [7] Webhook
+  addLine('\n[7] LINE Webhook', 'head');
+  const wh = await req('POST', '/webhook', { destination:'x', events:[] });
+  test('POST /webhook (signature ผิด) → 400/401', wh.status, [400,401,200], wh.data, 'warn');
+
+  const total = passed + failed + warned;
+  const score = Math.round((passed / total) * 100);
+  const grade = score>=90?'🏆 ดีมาก':score>=75?'✅ ดี':score>=60?'⚠️ พอใช้':'❌ ต้องแก้ไข';
+  addLine('\n' + '═'.repeat(55), 'dim');
+  addLine(`📊 ผ่าน ${passed}/${total} — คะแนน ${score}% — ${grade}`, score>=75?'pass':'fail');
+  addLine('═'.repeat(55), 'dim');
+
+  btn.disabled = false; btn.textContent = '▶ รันอีกครั้ง';
+  document.getElementById('copyBtn').style.display = '';
+  updateScore();
+}
+
+function copyResults() {
+  const total = passed + failed + warned;
+  const score = Math.round((passed / total) * 100);
+  const fails = results.filter(r => !r.pass && !r.isWarn).map(r => `• ${r.name} → HTTP ${r.status}${r.data?' | '+r.data:''}`).join('\n');
+  const warns = results.filter(r => r.isWarn).map(r => `• ${r.name} → HTTP ${r.status}`).join('\n');
+  const passes = results.filter(r => r.pass).map(r => `• ${r.name}`).join('\n');
+
+  const text = `ผลเทสต์ SMILE SERVICE API:
+✅ ผ่าน: ${passed}  ❌ ไม่ผ่าน: ${failed}  ⚠️ เตือน: ${warned}  🎯 คะแนน: ${score}%
+
+❌ ไม่ผ่าน:
+${fails||'(ไม่มี)'}
+
+⚠️ เตือน:
+${warns||'(ไม่มี)'}
+
+✅ ผ่าน:
+${passes}
+
+กรุณาวิเคราะห์และแนะนำการแก้ไขตามลำดับความสำคัญ`;
+
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    const orig = btn.textContent;
+    btn.textContent = '✅ คัดลอกแล้ว! แปะใน Claude ได้เลย';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 3000);
+  });
+}
+</script>
+</body>
+</html>

@@ -46,11 +46,8 @@ app.get('/health', (req, res) => {
 
 // ── Test page (same-origin ไม่มีปัญหา CORS) ──────────────────
 const path = require('path');
-const fs   = require('fs');
 app.get('/test', (req, res) => {
-  const f = path.join(__dirname, '../../test-smile.html');
-  if (fs.existsSync(f)) res.sendFile(f);
-  else res.status(404).send('test-smile.html not found');
+  res.sendFile(path.join(__dirname, '../public/test.html'));
 });
 
 // ── 404 ───────────────────────────────────────────────────────
