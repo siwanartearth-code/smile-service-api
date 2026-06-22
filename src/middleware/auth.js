@@ -9,11 +9,16 @@ async function authenticate(req, res, next) {
   const token = authHeader.slice(7);
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    const { rows } = await query(`SELECT * FROM users WHERE id = $1`, [payload.userId]);
-    if (!rows[0] || !rows[0].is_active) return res.status(401).json({ error: 'User not found' });
-    req.user = rows[0];
+    // ใช้ข้อมูลจาก JWT โดยตรง ไม่ดึง DB ทุก request (เร็วกว่า + ไม่ hang)
+    req.user = {
+      id:           payload.userId,
+      role:         payload.role   || 'user',
+      line_user_id: payload.lineUserId,
+      driver_id:    payload.driverId,
+    };
     next();
-  } catch {
+  } catch (err) {
+    console.error('[auth]', err.message);
     return res.status(401).json({ error: 'Invalid token' });
   }
 }
