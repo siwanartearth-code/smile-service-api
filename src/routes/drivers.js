@@ -14,8 +14,12 @@ router.post('/register', authenticate, async (req, res) => {
     car_image_url, car_insurance_url,
   } = req.body;
 
+  // แปลง empty string → null สำหรับ date fields และ optional fields
+  const safeDate = (v) => (v && v !== '' ? v : null);
+  const safeStr  = (v) => (v && v !== '' ? v : null);
+
   // อัปเดต role เป็น driver
-  await query(`UPDATE users SET role = 'driver', phone = $1 WHERE id = $2`, [req.body.phone, req.user.id]);
+  await query(`UPDATE users SET role = 'driver', phone = $1 WHERE id = $2`, [req.body.phone || null, req.user.id]);
 
   // สร้าง driver record
   const { rows } = await query(
@@ -32,10 +36,11 @@ router.post('/register', authenticate, async (req, res) => {
        car_image_url=$17, car_insurance_url=$18, updated_at=NOW()
      RETURNING *`,
     [
-      uuidv4(), req.user.id, first_name, last_name, id_card_number, id_card_image_url,
-      license_number, license_type, license_expiry, license_image_url,
-      car_brand, car_model, car_year, car_color, car_plate, car_type,
-      car_image_url, car_insurance_url,
+      uuidv4(), req.user.id,
+      safeStr(first_name), safeStr(last_name), safeStr(id_card_number), safeStr(id_card_image_url),
+      safeStr(license_number), safeStr(license_type), safeDate(license_expiry), safeStr(license_image_url),
+      safeStr(car_brand), safeStr(car_model), safeStr(car_year), safeStr(car_color), safeStr(car_plate), safeStr(car_type),
+      safeStr(car_image_url), safeStr(car_insurance_url),
     ]
   );
 
