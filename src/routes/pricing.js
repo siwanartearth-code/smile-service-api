@@ -22,13 +22,16 @@ router.get('/packages', async (req, res) => {
 router.post('/estimate', async (req, res) => {
   const { car_type, distance_km, duration_min } = req.body;
   if (!car_type || !distance_km) return res.status(400).json({ error: 'Missing car_type or distance_km' });
-
-  const price = await calculatePrice(
-    car_type,
-    parseFloat(distance_km),
-    parseFloat(duration_min || 30)
-  );
-  res.json(price);
+  try {
+    const price = await calculatePrice(
+      car_type,
+      parseFloat(distance_km),
+      parseFloat(duration_min || 30)
+    );
+    res.json(price);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ── PATCH /pricing/fuel-adjust  — Admin ปรับราคาน้ำมัน/ไฟฟ้า ────────────────
