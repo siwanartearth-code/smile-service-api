@@ -17,13 +17,7 @@ const app = express();
 // ── Security ──────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL,
-    process.env.WEB_URL,
-    'https://liff.line.me',
-    'http://localhost:5173',
-    'http://localhost:5174',
-  ],
+  origin: true,
   credentials: true,
 }));
 
