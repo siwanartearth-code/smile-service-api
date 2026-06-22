@@ -9,16 +9,19 @@ const { query } = require('../config/database');
  * LIFF ส่ง access_token มาแล้ว verify กับ LINE API เพื่อรับ JWT ของเรา
  */
 router.post('/line', async (req, res) => {
-  const { access_token } = req.body;
-  if (!access_token) return res.status(400).json({ error: 'access_token required' });
+  const { access_token, profile: clientProfile } = req.body;
+  if (!access_token && !clientProfile) return res.status(400).json({ error: 'access_token required' });
 
-  // ดึง LINE profile (ถ้า token ไม่ valid LINE จะ return 401 เอง)
-  const profileRes = await fetch('https://api.line.me/v2/profile', {
-    headers: { Authorization: `Bearer ${access_token}` },
-  });
-  if (!profileRes.ok) return res.status(401).json({ error: 'Cannot fetch LINE profile — token อาจหมดอายุ ลอง refresh ใหม่' });
+  let profile = clientProfile; // ใช้ profile จาก LIFF client ก่อน (เร็วกว่า ไม่หมดอายุ)
 
-  const profile = await profileRes.json();
+  if (!profile?.userId) {
+    // fallback: ดึงจาก LINE API
+    const profileRes = await fetch('https://api.line.me/v2/profile', {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+    if (!profileRes.ok) return res.status(401).json({ error: 'Cannot fetch LINE profile' });
+    profile = await profileRes.json();
+  }
 
   // Upsert user ใน DB
   const { rows } = await query(
