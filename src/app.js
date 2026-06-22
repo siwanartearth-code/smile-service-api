@@ -17,8 +17,9 @@ const app = express();
 // ── Security ──────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin: true,
-  credentials: true,
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // ── LINE Webhook needs raw body for signature verify ──────────
