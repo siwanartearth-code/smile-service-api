@@ -12,15 +12,11 @@ router.post('/line', async (req, res) => {
   const { access_token } = req.body;
   if (!access_token) return res.status(400).json({ error: 'access_token required' });
 
-  // Verify กับ LINE
-  const verifyRes = await fetch(`https://api.line.me/oauth2/v2.1/verify?access_token=${access_token}`);
-  if (!verifyRes.ok) return res.status(401).json({ error: 'Invalid LINE token' });
-
-  // ดึง LINE profile
+  // ดึง LINE profile (ถ้า token ไม่ valid LINE จะ return 401 เอง)
   const profileRes = await fetch('https://api.line.me/v2/profile', {
     headers: { Authorization: `Bearer ${access_token}` },
   });
-  if (!profileRes.ok) return res.status(401).json({ error: 'Cannot fetch LINE profile' });
+  if (!profileRes.ok) return res.status(401).json({ error: 'Cannot fetch LINE profile — token อาจหมดอายุ ลอง refresh ใหม่' });
 
   const profile = await profileRes.json();
 
