@@ -32,13 +32,4 @@ router.get('/payouts', authenticate, requireAdmin, async (req, res) => {
        FROM payout_requests pr
        JOIN drivers d ON d.id = pr.driver_id
        ORDER BY pr.created_at DESC
-       LIMIT 100`
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error('[admin/payouts]', err.message);
-    res.json([]);
-  }
-});
-
-module.exports = router;
+       LIMIT 

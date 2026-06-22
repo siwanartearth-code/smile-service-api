@@ -44,35 +44,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'Smile Service API', time: new Date().toISOString() });
 });
 
+// ── Debug: ทดสอบ token ──────────────────────────────────────
+const { authenticate, requireAdmin } = require('./middleware/auth');
+app.get('/debug-token', authenticate, (req, res) => {
+  res.json({ ok: true, user: { id: req.user?.id, role: req.user?.role, is_active: req.user?.is_active } });
+});
+app.get('/debug-admin', authenticate, requireAdmin, (req, res) => {
+  res.json({ ok: true, role: req.user?.role });
+});
+
 // ── Test page (same-origin ไม่มีปัญหา CORS) ──────────────────
 const path = require('path');
 app.get('/test', (req, res) => {
-  res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' https://smile-service-api.onrender.com");
-  res.sendFile(path.join(__dirname, '../public/test.html'));
-});
-
-// ── 404 ───────────────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
-
-// ── Error handler ─────────────────────────────────────────────
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
-});
-
-// ── ป้องกัน server crash จาก unhandled async errors ──────────
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚗 Smile Service API running on port ${PORT}`);
-});
-
-module.exports = app;
+  res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline'

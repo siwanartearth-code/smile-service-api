@@ -420,15 +420,4 @@ router.patch('/payouts/:payoutId/confirm', authenticate, requireAdmin, async (re
   res.json({ payout });
 });
 
-// ── Helper ─────────────────────────────────────────────────────────────────────
-function info(label, value) {
-  return {
-    type: 'box', layout: 'horizontal', spacing: 'sm', margin: 'xs',
-    contents: [
-      { type: 'text', text: label, size: 'sm', color: '#888', flex: 2 },
-      { type: 'text', text: value || '—', size: 'sm', color: '#333', flex: 3, wrap: true },
-    ],
-  };
-}
-
-module.exports = router;
+// ── Helper ───────────

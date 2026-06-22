@@ -39,7 +39,4 @@ router.patch('/fuel-adjust', authenticate, requireAdmin, async (req, res) => {
   const { car_type, adjust_rate, note } = req.body;
   // adjust_rate: เช่น 1.05 = แพงขึ้น 5%, 0.95 = ถูกลง 5%
   await updateFuelAdjustRate(car_type, adjust_rate, note);
-  res.json({ message: `ปรับราคา ${car_type} เป็น ×${adjust_rate} แล้ว` });
-});
-
-module.exports = router;
+  res.json({ message: `ปรับราคา
