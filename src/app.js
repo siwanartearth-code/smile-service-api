@@ -44,6 +44,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'Smile Service API', time: new Date().toISOString() });
 });
 
+// ── Test page (same-origin ไม่มีปัญหา CORS) ──────────────────
+const path = require('path');
+const fs   = require('fs');
+app.get('/test', (req, res) => {
+  const f = path.join(__dirname, '../../test-smile.html');
+  if (fs.existsSync(f)) res.sendFile(f);
+  else res.status(404).send('test-smile.html not found');
+});
+
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
