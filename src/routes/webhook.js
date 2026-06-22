@@ -656,4 +656,12 @@ function statusColor(s) {
   return m[s] || '#555555';
 }
 
+// ── Webhook error handler (signature ผิด → 400 ไม่ใช่ 500) ──────────────────
+router.use((err, req, res, next) => {
+  if (err.statusCode === 401 || err.name === 'SignatureValidationFailed') {
+    return res.status(400).json({ error: 'Invalid LINE signature' });
+  }
+  next(err);
+});
+
 module.exports = router;
