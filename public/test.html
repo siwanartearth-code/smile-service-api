@@ -163,6 +163,22 @@ async function startTests() {
     test(`${m} ${p} → 401`, (await req(m, p, m!=='GET'?{}:undefined)).status, 401);
   }
 
+  // [4.5] Debug — isolate auth issue
+  addLine('\n[4.5] Debug Token', 'head');
+  if (adminToken) {
+    const dbg1 = await req('GET', '/debug-token', null, adminToken);
+    test('GET /debug-token (token ถูก)', dbg1.status, 200, dbg1.data);
+    if (dbg1.ok) addLine('     └─ ' + JSON.stringify(dbg1.data), 'info');
+    else addLine('     └─ error: ' + (dbg1.error || JSON.stringify(dbg1.data)), 'fail');
+
+    const dbg2 = await req('GET', '/debug-admin', null, adminToken);
+    test('GET /debug-admin (requireAdmin)', dbg2.status, 200, dbg2.data);
+    if (dbg2.ok) addLine('     └─ ' + JSON.stringify(dbg2.data), 'info');
+    else addLine('     └─ HTTP ' + dbg2.status + ' error: ' + (dbg2.error || JSON.stringify(dbg2.data)), 'fail');
+  } else {
+    addLine('  ⚠️  ข้าม debug — ไม่มี admin token', 'warn');
+  }
+
   // [5] Admin
   addLine('\n[5] Admin Routes', 'head');
   test('GET /admin/stats (ไม่มี token) → 401', (await req('GET','/admin/stats')).status, 401);
