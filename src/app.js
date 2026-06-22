@@ -47,6 +47,7 @@ app.get('/health', (req, res) => {
 // ── Test page (same-origin ไม่มีปัญหา CORS) ──────────────────
 const path = require('path');
 app.get('/test', (req, res) => {
+  res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' https://smile-service-api.onrender.com");
   res.sendFile(path.join(__dirname, '../public/test.html'));
 });
 
