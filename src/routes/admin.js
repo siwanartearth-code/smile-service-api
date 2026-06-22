@@ -5,18 +5,23 @@ const { authenticate, requireAdmin } = require('../middleware/auth');
 
 // ── GET /admin/stats  — สถิติ Dashboard ──────────────────────────────────────
 router.get('/stats', authenticate, requireAdmin, async (req, res) => {
-  const [bookings, drivers, revenue, pending] = await Promise.all([
-    query(`SELECT COUNT(*) FROM bookings`),
-    query(`SELECT COUNT(*) FROM drivers WHERE status = 'active'`),
-    query(`SELECT COALESCE(SUM(final_price),0) AS total FROM bookings WHERE status = 'completed'`),
-    query(`SELECT COUNT(*) FROM bookings WHERE status IN ('searching','confirmed','driver_arrived','in_progress')`),
-  ]);
-  res.json({
-    total_bookings:   parseInt(bookings.rows[0].count),
-    active_drivers:   parseInt(drivers.rows[0].count),
-    total_revenue:    parseFloat(revenue.rows[0].total),
-    pending_bookings: parseInt(pending.rows[0].count),
-  });
+  try {
+    const [bookings, drivers, revenue, pending] = await Promise.all([
+      query(`SELECT COUNT(*) FROM bookings`),
+      query(`SELECT COUNT(*) FROM drivers WHERE status = 'active'`),
+      query(`SELECT COALESCE(SUM(final_price),0) AS total FROM bookings WHERE status = 'completed'`),
+      query(`SELECT COUNT(*) FROM bookings WHERE status IN ('searching','confirmed','driver_arrived','in_progress')`),
+    ]);
+    res.json({
+      total_bookings:   parseInt(bookings.rows[0].count),
+      active_drivers:   parseInt(drivers.rows[0].count),
+      total_revenue:    parseFloat(revenue.rows[0].total),
+      pending_bookings: parseInt(pending.rows[0].count),
+    });
+  } catch (err) {
+    console.error('[admin/stats]', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET /admin/payouts  — รายการขอรับเงินทั้งหมด ─────────────────────────────

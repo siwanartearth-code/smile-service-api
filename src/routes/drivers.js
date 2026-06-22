@@ -334,14 +334,19 @@ router.patch('/me/notify-offline', authenticate, async (req, res) => {
 // ── GET /drivers  — Admin ดูรายชื่อคนขับทั้งหมด ──────────────────────────────
 router.get('/', authenticate, requireAdmin, async (req, res) => {
   const { status = 'pending' } = req.query;
-  const { rows } = await query(
-    `SELECT d.*, u.display_name, u.line_user_id
-     FROM drivers d JOIN users u ON u.id = d.user_id
-     WHERE d.status = $1
-     ORDER BY d.created_at DESC`,
-    [status]
-  );
-  res.json(rows);
+  try {
+    const { rows } = await query(
+      `SELECT d.*, u.display_name, u.line_user_id
+       FROM drivers d JOIN users u ON u.id = d.user_id
+       WHERE d.status = $1
+       ORDER BY d.created_at DESC`,
+      [status]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[drivers/]', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── PATCH /drivers/:id/verify  — Admin อนุมัติ/ปฏิเสธ ────────────────────────
